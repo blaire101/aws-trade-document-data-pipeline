@@ -1,0 +1,14 @@
+column,dtype,row_count,null_count,null_pct,distinct_count
+document_date,object,19,0,0.0,18
+buyer_name,object,19,0,0.0,3
+document_type,object,19,0,0.0,1
+reference_no,string,19,0,0.0,18
+seller_name,object,19,0,0.0,3
+product_category,object,19,0,0.0,3
+quantity,int64,19,0,0.0,10
+item_description,object,19,0,0.0,11
+invoice_year,int64,19,0,0.0,3
+unit_price,float64,19,6,31.5789,12
+amount,float64,19,0,0.0,19
+source_file,object,19,0,0.0,3
+source_row_number,int64,19,0,0.0,7

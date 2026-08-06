@@ -1,0 +1,3 @@
+document_date,buyer_name,document_type,reference_no,seller_name,product_category,quantity,item_description,invoice_year,unit_price,amount,source_file,source_row_number,document_date_parsed,unit_price_recomputed,unit_price_variance,analysis_unit_price,year,is_anomalous_price,anomaly_reason
+2020-04-02,SAKAE KYO PTE LTD,CINV,INV-1006,YOCORN FOOD ENTERPRISE PTE LTD,FOOD_PRODUCT,10,Nori Wrapper Special,2020,22.0,220.0,CINV_2020.csv,7,2020-04-02,22.0,0.0,22.0,2020,True,POTENTIAL_UNIT_PRICE_ANOMALY_IQR
+2021-06-09,OCEANIC MARINE PTE LTD,CINV,INV-2106,MARINE SUPPLY ASIA PTE LTD,MARINE_CONSUMABLE,20,Absorbent Pad,2021,4.9,98.0,CINV_2021.csv,7,2021-06-09,4.9,0.0,4.9,2021,True,POTENTIAL_UNIT_PRICE_ANOMALY_IQR

@@ -1,0 +1,10 @@
+digraph G {
+ graph [rankdir=TB,bgcolor="white",pad="0.3",nodesep="0.35",ranksep="0.6",fontname="Arial",labelloc="t",label="AWS Trade CSV Ingestion Architecture",fontsize="20",splines=ortho];
+ node [shape=box,style="rounded,filled",fillcolor="white",color="#94A3B8",fontname="Arial",fontsize="11",margin="0.12"];
+ edge [color="#475569",penwidth="1.4",arrowsize="0.8",fontname="Arial",fontsize="9"];
+ client [label="Client SFTP Endpoint\nSecure CSV batch exchange",fillcolor="#FFF7ED",color="#F97316"];
+ event [label="EventBridge Scheduler"]; sfn [label="Step Functions\nOrchestration + retry"]; secret [label="Secrets Manager\nSFTP username + SSH key",fillcolor="#FEF3C7"];
+ subgraph cluster_vpc { label="Application VPC"; color="#86EFAC"; style="rounded"; fargate [label="ECS Fargate\nSFTP Downloader\nPrivate subnet"]; nat [label="NAT Gateway\nPublic subnet"]; s3ep [label="S3 Gateway VPC Endpoint"]; }
+ raw [label="Amazon S3 — Raw\nCSV landing zone",fillcolor="#ECFDF5"]; glue [label="AWS Glue ETL\nSpark SQL / PySpark"]; processed [label="Amazon S3 — Processed\ncleaned / failed / review"]; catalog [label="Glue Data Catalog"]; cw [label="CloudWatch / SNS"];
+ event->sfn->fargate; secret->fargate [label="credentials"]; fargate->nat [label="SFTP/SSH 22"]; nat->client [dir=both,label="download CSV"]; fargate->s3ep->raw; sfn->glue [label="after download"]; raw->glue->processed; glue->catalog; sfn->cw [style=dashed]; glue->cw [style=dashed];
+}

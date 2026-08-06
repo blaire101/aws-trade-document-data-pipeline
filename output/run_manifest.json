@@ -1,0 +1,28 @@
+{
+  "configuration": {
+    "start_date": "2020-01-01",
+    "end_date": "2022-12-31",
+    "target_document_type": "CINV",
+    "minimum_category_frequency": 2,
+    "anomaly_iqr_multiplier": 1.5
+  },
+  "source_files": [
+    "CINV_2020.csv",
+    "CINV_2021.csv",
+    "CINV_2022_legacy_schema.csv"
+  ],
+  "row_counts": {
+    "master": 19,
+    "validation_failed": 0,
+    "duplicate_failed": 1,
+    "anomaly_review": 2,
+    "cleaned": 18,
+    "failed_total": 1
+  },
+  "quality_checks": {
+    "reconciled": true,
+    "anomalies_retained_in_cleaned": true,
+    "hash_cardinality_preserved": true,
+    "cleaned_has_no_duplicate_keys": true
+  }
+}

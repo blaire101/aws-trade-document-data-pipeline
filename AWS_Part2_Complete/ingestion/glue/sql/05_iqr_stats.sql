@@ -1,0 +1,1 @@
+SELECT year,buyer_name,product_category, percentile_approx(unit_price_recomputed,0.25,10000) q1, percentile_approx(unit_price_recomputed,0.75,10000) q3, COUNT(*) peer_group_size FROM enriched GROUP BY year,buyer_name,product_category
