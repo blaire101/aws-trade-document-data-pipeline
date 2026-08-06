@@ -1,0 +1,33 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Monitoring layer - CloudWatch log groups and SNS failure topic.
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: trade-data
+
+Resources:
+  DownloaderLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /${ProjectName}/downloader
+      RetentionInDays: 14
+
+  StateMachineLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/vendedlogs/states/${ProjectName}-ingestion
+      RetentionInDays: 14
+
+  FailureTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub ${ProjectName}-ingestion-failure
+
+Outputs:
+  DownloaderLogGroupName:
+    Value: !Ref DownloaderLogGroup
+  StateMachineLogGroupArn:
+    Value: !GetAtt StateMachineLogGroup.Arn
+  FailureTopicArn:
+    Value: !Ref FailureTopic

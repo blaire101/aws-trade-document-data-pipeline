@@ -1,0 +1,112 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Master nested-stack template for the AWS Trade Document Data Pipeline.
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: trade-data
+  TemplateBaseUrl:
+    Type: String
+    Description: HTTPS S3 URL prefix containing the nested templates, without a trailing slash.
+  SftpHost:
+    Type: String
+  SftpSecretId:
+    Type: String
+    Description: ARN or name of an existing AWS Secrets Manager secret containing SFTP credentials.
+  SftpRemoteDir:
+    Type: String
+    Default: /outbound/cinv
+  DownloaderImageUri:
+    Type: String
+  GlueScriptS3Uri:
+    Type: String
+  GlueSqlBaseUri:
+    Type: String
+  ScheduleExpression:
+    Type: String
+    Default: rate(7 days)
+  TableauAmiId:
+    Type: AWS::EC2::Image::Id
+  TableauInstanceType:
+    Type: String
+    Default: m6i.2xlarge
+  PrivateAccessCidr:
+    Type: String
+    Default: 10.0.0.0/8
+
+Resources:
+  NetworkStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub ${TemplateBaseUrl}/network.yaml
+      Parameters:
+        ProjectName: !Ref ProjectName
+
+  StorageStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub ${TemplateBaseUrl}/storage.yaml
+      Parameters:
+        ProjectName: !Ref ProjectName
+
+  MonitoringStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub ${TemplateBaseUrl}/monitoring.yaml
+      Parameters:
+        ProjectName: !Ref ProjectName
+
+  ProcessingStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub ${TemplateBaseUrl}/processing.yaml
+      Parameters:
+        ProjectName: !Ref ProjectName
+        DataBucketName: !GetAtt StorageStack.Outputs.DataBucketName
+        DataKeyArn: !GetAtt StorageStack.Outputs.DataKeyArn
+        GlueScriptS3Uri: !Ref GlueScriptS3Uri
+        GlueSqlBaseUri: !Ref GlueSqlBaseUri
+
+  IngestionStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub ${TemplateBaseUrl}/ingestion.yaml
+      Parameters:
+        ProjectName: !Ref ProjectName
+        VpcId: !GetAtt NetworkStack.Outputs.VpcId
+        PrivateAppSubnetId: !GetAtt NetworkStack.Outputs.PrivateAppSubnetId
+        DataBucketName: !GetAtt StorageStack.Outputs.DataBucketName
+        DataKeyArn: !GetAtt StorageStack.Outputs.DataKeyArn
+        GlueJobName: !GetAtt ProcessingStack.Outputs.GlueJobName
+        FailureTopicArn: !GetAtt MonitoringStack.Outputs.FailureTopicArn
+        DownloaderLogGroupName: !GetAtt MonitoringStack.Outputs.DownloaderLogGroupName
+        StateMachineLogGroupArn: !GetAtt MonitoringStack.Outputs.StateMachineLogGroupArn
+        SftpHost: !Ref SftpHost
+        SftpSecretId: !Ref SftpSecretId
+        SftpRemoteDir: !Ref SftpRemoteDir
+        DownloaderImageUri: !Ref DownloaderImageUri
+        ScheduleExpression: !Ref ScheduleExpression
+
+  AnalyticsStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub ${TemplateBaseUrl}/analytics.yaml
+      Parameters:
+        ProjectName: !Ref ProjectName
+        VpcId: !GetAtt NetworkStack.Outputs.VpcId
+        PrivateAnalyticsSubnetId: !GetAtt NetworkStack.Outputs.PrivateAnalyticsSubnetId
+        DataBucketName: !GetAtt StorageStack.Outputs.DataBucketName
+        DataKeyArn: !GetAtt StorageStack.Outputs.DataKeyArn
+        TableauAmiId: !Ref TableauAmiId
+        TableauInstanceType: !Ref TableauInstanceType
+        PrivateAccessCidr: !Ref PrivateAccessCidr
+
+Outputs:
+  DataBucketName:
+    Value: !GetAtt StorageStack.Outputs.DataBucketName
+  StateMachineArn:
+    Value: !GetAtt IngestionStack.Outputs.StateMachineArn
+  GlueJobName:
+    Value: !GetAtt ProcessingStack.Outputs.GlueJobName
+  AthenaWorkGroup:
+    Value: !GetAtt AnalyticsStack.Outputs.AthenaWorkGroup

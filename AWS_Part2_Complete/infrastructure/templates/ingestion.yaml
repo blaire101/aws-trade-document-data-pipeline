@@ -1,0 +1,256 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Ingestion layer - ECS Fargate SFTP downloader, Step Functions orchestration and EventBridge Scheduler.
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: trade-data
+  VpcId:
+    Type: String
+  PrivateAppSubnetId:
+    Type: String
+  DataBucketName:
+    Type: String
+  DataKeyArn:
+    Type: String
+  GlueJobName:
+    Type: String
+  FailureTopicArn:
+    Type: String
+  DownloaderLogGroupName:
+    Type: String
+  StateMachineLogGroupArn:
+    Type: String
+  SftpHost:
+    Type: String
+  SftpSecretId:
+    Type: String
+  SftpRemoteDir:
+    Type: String
+    Default: /outbound/cinv
+  DownloaderImageUri:
+    Type: String
+  ScheduleExpression:
+    Type: String
+    Default: rate(7 days)
+
+Resources:
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub ${ProjectName}-cluster
+
+  FargateSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Fargate downloader - outbound SFTP only
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+
+  TaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: ecs-tasks.amazonaws.com}
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+
+  DownloaderTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: ecs-tasks.amazonaws.com}
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: RawS3AndSftpSecretAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [s3:PutObject, s3:AbortMultipartUpload, s3:ListBucketMultipartUploads, s3:ListMultipartUploadParts]
+                Resource:
+                  - !Sub arn:${AWS::Partition}:s3:::${DataBucketName}
+                  - !Sub arn:${AWS::Partition}:s3:::${DataBucketName}/raw/*
+              - Effect: Allow
+                Action: [kms:Encrypt, kms:GenerateDataKey]
+                Resource: !Ref DataKeyArn
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Ref SftpSecretId
+
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub ${ProjectName}-downloader
+      RequiresCompatibilities: [FARGATE]
+      NetworkMode: awsvpc
+      Cpu: '512'
+      Memory: '1024'
+      ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt DownloaderTaskRole.Arn
+      ContainerDefinitions:
+        - Name: downloader
+          Image: !Ref DownloaderImageUri
+          Essential: true
+          Environment:
+            - Name: SFTP_HOST
+              Value: !Ref SftpHost
+            - Name: SFTP_SECRET_ID
+              Value: !Ref SftpSecretId
+            - Name: SFTP_REMOTE_DIR
+              Value: !Ref SftpRemoteDir
+            - Name: TARGET_BUCKET
+              Value: !Ref DataBucketName
+            - Name: ARCHIVE_KEY
+              Value: raw/archive/source.zip
+            - Name: STAGED_PREFIX
+              Value: raw/staged
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref DownloaderLogGroupName
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ecs
+
+  StepFunctionsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: states.amazonaws.com}
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: OrchestrateIngestion
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [ecs:RunTask, ecs:StopTask, ecs:DescribeTasks]
+                Resource: '*'
+              - Effect: Allow
+                Action: iam:PassRole
+                Resource:
+                  - !GetAtt TaskExecutionRole.Arn
+                  - !GetAtt DownloaderTaskRole.Arn
+              - Effect: Allow
+                Action: [glue:StartJobRun, glue:GetJobRun, glue:GetJobRuns, glue:BatchStopJobRun]
+                Resource: '*'
+              - Effect: Allow
+                Action: sns:Publish
+                Resource: !Ref FailureTopicArn
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogDelivery
+                  - logs:GetLogDelivery
+                  - logs:UpdateLogDelivery
+                  - logs:DeleteLogDelivery
+                  - logs:ListLogDeliveries
+                  - logs:PutResourcePolicy
+                  - logs:DescribeResourcePolicies
+                  - logs:DescribeLogGroups
+                Resource: '*'
+
+  IngestionStateMachine:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: !Sub ${ProjectName}-ingestion
+      RoleArn: !GetAtt StepFunctionsRole.Arn
+      StateMachineType: STANDARD
+      LoggingConfiguration:
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !Ref StateMachineLogGroupArn
+        IncludeExecutionData: true
+        Level: ALL
+      DefinitionString: !Sub |
+        {
+          "Comment": "Download CINV CSV batches from SFTP, land them in S3, then run Glue ETL",
+          "StartAt": "RunDownloader",
+          "States": {
+            "RunDownloader": {
+              "Type": "Task",
+              "Resource": "arn:${AWS::Partition}:states:::ecs:runTask.sync",
+              "Parameters": {
+                "LaunchType": "FARGATE",
+                "Cluster": "${ECSCluster}",
+                "TaskDefinition": "${TaskDefinition}",
+                "NetworkConfiguration": {
+                  "AwsvpcConfiguration": {
+                    "Subnets": ["${PrivateAppSubnetId}"],
+                    "SecurityGroups": ["${FargateSecurityGroup}"],
+                    "AssignPublicIp": "DISABLED"
+                  }
+                }
+              },
+              "Retry": [{"ErrorEquals": ["ECS.AmazonECSException", "States.Timeout", "States.TaskFailed"], "IntervalSeconds": 10, "MaxAttempts": 2, "BackoffRate": 2.0}],
+              "Catch": [{"ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "NotifyFailure"}],
+              "Next": "RunGlueJob"
+            },
+            "RunGlueJob": {
+              "Type": "Task",
+              "Resource": "arn:${AWS::Partition}:states:::glue:startJobRun.sync",
+              "Parameters": {"JobName": "${GlueJobName}"},
+              "Retry": [{"ErrorEquals": ["Glue.AWSGlueException", "States.Timeout", "States.TaskFailed"], "IntervalSeconds": 30, "MaxAttempts": 2, "BackoffRate": 2.0}],
+              "Catch": [{"ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "NotifyFailure"}],
+              "Next": "IngestionSucceeded"
+            },
+            "NotifyFailure": {
+              "Type": "Task",
+              "Resource": "arn:${AWS::Partition}:states:::sns:publish",
+              "Parameters": {"TopicArn": "${FailureTopicArn}", "Message.$": "States.JsonToString($)"},
+              "Next": "IngestionFailed"
+            },
+            "IngestionSucceeded": {"Type": "Succeed"},
+            "IngestionFailed": {"Type": "Fail", "Error": "TradeIngestionFailed", "Cause": "Downloader or Glue failed. Review Step Functions and CloudWatch Logs."}
+          }
+        }
+
+  SchedulerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: scheduler.amazonaws.com}
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: StartStateMachine
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: states:StartExecution
+                Resource: !Ref IngestionStateMachine
+
+  DisabledSchedule:
+    Type: AWS::Scheduler::Schedule
+    Properties:
+      Name: !Sub ${ProjectName}-schedule
+      Description: Disabled by default; enable after manual validation.
+      FlexibleTimeWindow: {Mode: 'OFF'}
+      ScheduleExpression: !Ref ScheduleExpression
+      State: DISABLED
+      Target:
+        Arn: !Ref IngestionStateMachine
+        RoleArn: !GetAtt SchedulerRole.Arn
+        Input: '{}'
+
+Outputs:
+  StateMachineArn:
+    Value: !Ref IngestionStateMachine
+  ScheduleName:
+    Value: !Ref DisabledSchedule

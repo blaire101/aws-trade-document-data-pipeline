@@ -1,13 +1,18 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Trade Data PipelineB exploitation - private Tableau EC2, Athena endpoint and workgroup.
+Description: Analytics layer - private Tableau EC2, Athena VPC endpoint and Athena workgroup.
 
 Parameters:
   ProjectName:
     Type: String
     Default: trade-data
-  FoundationStackName:
+  VpcId:
     Type: String
-    Default: trade-data-foundation
+  PrivateAnalyticsSubnetId:
+    Type: String
+  DataBucketName:
+    Type: String
+  DataKeyArn:
+    Type: String
   TableauAmiId:
     Type: AWS::EC2::Image::Id
   TableauInstanceType:
@@ -22,8 +27,7 @@ Resources:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupDescription: Private Tableau access
-      VpcId:
-        Fn::ImportValue: !Sub ${FoundationStackName}-VpcId
+      VpcId: !Ref VpcId
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 443
@@ -39,8 +43,7 @@ Resources:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupDescription: Athena endpoint accepts HTTPS from Tableau only
-      VpcId:
-        Fn::ImportValue: !Sub ${FoundationStackName}-VpcId
+      VpcId: !Ref VpcId
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 443
@@ -50,15 +53,12 @@ Resources:
   AthenaEndpoint:
     Type: AWS::EC2::VPCEndpoint
     Properties:
-      VpcId:
-        Fn::ImportValue: !Sub ${FoundationStackName}-VpcId
+      VpcId: !Ref VpcId
       VpcEndpointType: Interface
       ServiceName: !Sub com.amazonaws.${AWS::Region}.athena
       PrivateDnsEnabled: true
-      SubnetIds:
-        - Fn::ImportValue: !Sub ${FoundationStackName}-PrivateAnalyticsSubnetId
-      SecurityGroupIds:
-        - !Ref AthenaEndpointSecurityGroup
+      SubnetIds: [!Ref PrivateAnalyticsSubnetId]
+      SecurityGroupIds: [!Ref AthenaEndpointSecurityGroup]
 
   AthenaWorkGroup:
     Type: AWS::Athena::WorkGroup
@@ -69,14 +69,10 @@ Resources:
         EnforceWorkGroupConfiguration: true
         PublishCloudWatchMetricsEnabled: true
         ResultConfiguration:
-          OutputLocation: !Sub
-            - s3://${Bucket}/athena-results/
-            - Bucket:
-                Fn::ImportValue: !Sub ${FoundationStackName}-DataBucketName
+          OutputLocation: !Sub s3://${DataBucketName}/athena-results/
           EncryptionConfiguration:
             EncryptionOption: SSE_KMS
-            KmsKey:
-              Fn::ImportValue: !Sub ${FoundationStackName}-DataKeyArn
+            KmsKey: !Ref DataKeyArn
 
   TableauRole:
     Type: AWS::IAM::Role
@@ -95,36 +91,19 @@ Resources:
             Version: '2012-10-17'
             Statement:
               - Effect: Allow
-                Action:
-                  - athena:StartQueryExecution
-                  - athena:GetQueryExecution
-                  - athena:GetQueryResults
-                  - athena:StopQueryExecution
-                  - athena:GetWorkGroup
+                Action: [athena:StartQueryExecution, athena:GetQueryExecution, athena:GetQueryResults, athena:StopQueryExecution, athena:GetWorkGroup]
                 Resource: '*'
               - Effect: Allow
-                Action:
-                  - glue:GetDatabase
-                  - glue:GetDatabases
-                  - glue:GetTable
-                  - glue:GetTables
-                  - glue:GetPartitions
+                Action: [glue:GetDatabase, glue:GetDatabases, glue:GetTable, glue:GetTables, glue:GetPartitions]
                 Resource: '*'
               - Effect: Allow
                 Action: [s3:GetObject, s3:ListBucket, s3:PutObject, s3:GetBucketLocation]
                 Resource:
-                  - !Sub
-                    - arn:${AWS::Partition}:s3:::${Bucket}
-                    - Bucket:
-                        Fn::ImportValue: !Sub ${FoundationStackName}-DataBucketName
-                  - !Sub
-                    - arn:${AWS::Partition}:s3:::${Bucket}/*
-                    - Bucket:
-                        Fn::ImportValue: !Sub ${FoundationStackName}-DataBucketName
+                  - !Sub arn:${AWS::Partition}:s3:::${DataBucketName}
+                  - !Sub arn:${AWS::Partition}:s3:::${DataBucketName}/*
               - Effect: Allow
                 Action: [kms:Decrypt, kms:Encrypt, kms:GenerateDataKey]
-                Resource:
-                  Fn::ImportValue: !Sub ${FoundationStackName}-DataKeyArn
+                Resource: !Ref DataKeyArn
 
   TableauInstanceProfile:
     Type: AWS::IAM::InstanceProfile
@@ -136,8 +115,7 @@ Resources:
     Properties:
       ImageId: !Ref TableauAmiId
       InstanceType: !Ref TableauInstanceType
-      SubnetId:
-        Fn::ImportValue: !Sub ${FoundationStackName}-PrivateAnalyticsSubnetId
+      SubnetId: !Ref PrivateAnalyticsSubnetId
       SecurityGroupIds: [!Ref TableauSecurityGroup]
       IamInstanceProfile: !Ref TableauInstanceProfile
       UserData:
@@ -145,8 +123,7 @@ Resources:
           #!/usr/bin/env bash
           set -e
           dnf update -y || yum update -y
-          dnf install -y java-17-amazon-corretto-headless unzip curl || \
-            yum install -y java-17-amazon-corretto-headless unzip curl
+          dnf install -y java-17-amazon-corretto-headless unzip curl || yum install -y java-17-amazon-corretto-headless unzip curl
           mkdir -p /opt/tableau/athena-jdbc
       Tags:
         - Key: Name

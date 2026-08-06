@@ -1,0 +1,85 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Processing layer - Glue Data Catalog database, IAM role and Glue ETL job.
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: trade-data
+  DataBucketName:
+    Type: String
+  DataKeyArn:
+    Type: String
+  GlueScriptS3Uri:
+    Type: String
+  GlueSqlBaseUri:
+    Type: String
+
+Resources:
+  GlueDatabase:
+    Type: AWS::Glue::Database
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseInput:
+        Name: !Sub ${ProjectName}-database
+
+  GlueRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: glue.amazonaws.com}
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSGlueServiceRole
+      Policies:
+        - PolicyName: TradeDataAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [s3:GetObject, s3:PutObject, s3:DeleteObject, s3:ListBucket]
+                Resource:
+                  - !Sub arn:${AWS::Partition}:s3:::${DataBucketName}
+                  - !Sub arn:${AWS::Partition}:s3:::${DataBucketName}/*
+              - Effect: Allow
+                Action: [kms:Encrypt, kms:Decrypt, kms:GenerateDataKey]
+                Resource: !Ref DataKeyArn
+
+  GlueJob:
+    Type: AWS::Glue::Job
+    Properties:
+      Name: !Sub ${ProjectName}-transform
+      Role: !GetAtt GlueRole.Arn
+      GlueVersion: '4.0'
+      WorkerType: G.1X
+      NumberOfWorkers: 2
+      Command:
+        Name: glueetl
+        PythonVersion: '3'
+        ScriptLocation: !Ref GlueScriptS3Uri
+      DefaultArguments:
+        '--job-language': python
+        '--enable-continuous-cloudwatch-log': 'true'
+        '--enable-metrics': 'true'
+        '--SOURCE_PATH': !Sub s3://${DataBucketName}/raw/staged/
+        '--TARGET_PATH': !Sub s3://${DataBucketName}/processed/
+        '--PROFILE_PATH': !Sub s3://${DataBucketName}/profiling/
+        '--MANIFEST_PATH': !Sub s3://${DataBucketName}/manifests/
+        '--DATABASE_NAME': !Ref GlueDatabase
+        '--CLEANED_TABLE': trade_invoice_cleaned
+        '--FAILED_TABLE': trade_invoice_failed
+        '--REVIEW_TABLE': trade_invoice_review
+        '--SQL_BASE_URI': !Ref GlueSqlBaseUri
+        '--START_DATE': '2020-01-01'
+        '--END_DATE': '2022-12-31'
+        '--TARGET_DOCUMENT_TYPE': 'CINV'
+        '--MIN_CATEGORY_FREQUENCY': '2'
+        '--IQR_MULTIPLIER': '1.5'
+
+Outputs:
+  GlueDatabaseName:
+    Value: !Ref GlueDatabase
+  GlueJobName:
+    Value: !Ref GlueJob

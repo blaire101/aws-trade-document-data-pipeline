@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Trade Data Pipeline shared VPC, S3, KMS, NAT and S3 Gateway Endpoint.
+Description: Network layer - VPC, public/private subnets, NAT Gateway, routing and S3 Gateway Endpoint.
 
 Parameters:
   ProjectName:
@@ -7,36 +7,6 @@ Parameters:
     Default: trade-data
 
 Resources:
-  DataKey:
-    Type: AWS::KMS::Key
-    Properties:
-      EnableKeyRotation: true
-      KeyPolicy:
-        Version: '2012-10-17'
-        Statement:
-          - Sid: RootAccess
-            Effect: Allow
-            Principal:
-              AWS: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:root
-            Action: kms:*
-            Resource: '*'
-
-  DataBucket:
-    Type: AWS::S3::Bucket
-    Properties:
-      BucketEncryption:
-        ServerSideEncryptionConfiguration:
-          - ServerSideEncryptionByDefault:
-              SSEAlgorithm: aws:kms
-              KMSMasterKeyID: !GetAtt DataKey.Arn
-      PublicAccessBlockConfiguration:
-        BlockPublicAcls: true
-        BlockPublicPolicy: true
-        IgnorePublicAcls: true
-        RestrictPublicBuckets: true
-      VersioningConfiguration:
-        Status: Enabled
-
   VPC:
     Type: AWS::EC2::VPC
     Properties:
@@ -159,25 +129,9 @@ Resources:
 Outputs:
   VpcId:
     Value: !Ref VPC
-    Export:
-      Name: !Sub ${AWS::StackName}-VpcId
   PublicSubnetId:
     Value: !Ref PublicSubnet
-    Export:
-      Name: !Sub ${AWS::StackName}-PublicSubnetId
   PrivateAppSubnetId:
     Value: !Ref PrivateAppSubnet
-    Export:
-      Name: !Sub ${AWS::StackName}-PrivateAppSubnetId
   PrivateAnalyticsSubnetId:
     Value: !Ref PrivateAnalyticsSubnet
-    Export:
-      Name: !Sub ${AWS::StackName}-PrivateAnalyticsSubnetId
-  DataBucketName:
-    Value: !Ref DataBucket
-    Export:
-      Name: !Sub ${AWS::StackName}-DataBucketName
-  DataKeyArn:
-    Value: !GetAtt DataKey.Arn
-    Export:
-      Name: !Sub ${AWS::StackName}-DataKeyArn
